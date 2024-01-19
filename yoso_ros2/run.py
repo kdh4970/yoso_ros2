@@ -1,16 +1,11 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
-import glob
 import multiprocessing as mp
 import numpy as np
 import os
-import tempfile
-import time
-import warnings
+import signal
 import cv2
-import tqdm
 import rclpy
-from rclpy.executors import MultiThreadedExecutor
 import sys
 import timeit
 from rclpy.node import Node
@@ -24,12 +19,10 @@ from detectron2.utils.logger import setup_logger
 from demo.predictor import VisualizationDemo
 from demo.config import add_yoso_config
 from projects.YOSO.yoso.segmentator import YOSO
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 import torch
-import numba as nb
-from message_filters import ApproximateTimeSynchronizer, Subscriber
 
-torch.multiprocessing.set_start_method('spawn')
+torch.multiprocessing.set_start_method('spawn',force=True)
 
 # usgin torch cuda gpu 1
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -255,7 +248,96 @@ class YosoNode(Node):
         print("!!END===============================")
 
 
+
+class YosoNode_dev(Node):
+    def __init__(self,args,input_camera_name:str) -> None:
+        rclpy.init()
+
+        super().__init__("YOSO_" + input_camera_name)
+
+        # Define Topic and Subscriber and Publisher
+        self._target_cam = input_camera_name
+        self._rgb_topic_name = "/azure_kinect/" + input_camera_name + "/rgb/image_raw"
+        self._rgb_image_subscriber = self.create_subscription(Image, self._rgb_topic_name, self.single_callback, 2)
+        self._seg_mask_pub = self.create_publisher(Image, "/yoso_node/" + input_camera_name , 1)
+
+        self.bridge = CvBridge()
+
+        args = get_parser().parse_args()
+        setup_logger(name="fvcore")
+        logger = setup_logger()
+        logger.info("Arguments: " + str(args))
+
+        cfg = setup_cfg(args)
+        self.demo = VisualizationDemo(cfg, parallel=False)
+        rclpy.spin(self)
+        rclpy.shutdown()
+
+    def change_scale(self,pos)-> None:
+        if pos==0: return
+        global image_scale, Image_height, Image_width
+        image_scale = pos
+        # Image_height = 1536 * (image_scale/10)
+        # Image_width = 2048 * (image_scale/10)
+        Image_height = 72 * image_scale
+        Image_width = 128 * image_scale
+
+    def run(self,args) -> None:
+        args = get_parser().parse_args()
+        setup_logger(name="fvcore")
+        logger = setup_logger()
+        logger.info("Arguments: " + str(args))
+
+        cfg = setup_cfg(args)
+        self.demo = VisualizationDemo(cfg, parallel=False)
+        rclpy.spin(self)
+
+    def generate_single_segmask(self,header,panoptic_seg,seg_info):
+        if DEBUG: start_time = timeit.default_timer()
+        # convert tensor to numpy array
+        temp = panoptic_seg.cpu().numpy()
+        if DEBUG: checkpoint = timeit.default_timer()
+        panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
+        for i in range(len(seg_info)): panoptic_mask[temp==i+1] = seg_info[i]['category_id']+1
+
+        if DEBUG: checkpoint2 = timeit.default_timer()
+        Seg_msg = self.bridge.cv2_to_imgmsg(panoptic_mask, "mono8")
+        Seg_msg.header = header
+        
+        if DEBUG: checkpoint3 = timeit.default_timer()
+        
+        
+        self._seg_mask_pub.publish(Seg_msg)
+        if DEBUG:
+            end_time = timeit.default_timer()
+            print("tensor to numpy time  : ", 1000 * (checkpoint-start_time))
+            print("mask gen time         : ", 1000 * (checkpoint2-checkpoint))
+            print("mask to msg copy time : ", 1000 * (checkpoint3-checkpoint2))
+            print("msg pub time          : ", 1000 * (end_time-checkpoint3))
+
+    def single_callback(self, msg)-> None:
+        try :
+            start_time = timeit.default_timer()
+            input_image = cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (int(Image_width),int(Image_height)))# 1280 720
+            if DEBUG:
+                resize_time = timeit.default_timer()
+                print("resize time           : ",1000*(resize_time-start_time))
+            result_panoptic_seg, segments_info = self.demo.run_on_azure(input_image)
+            if DEBUG:
+                seg_time = timeit.default_timer()
+                print("prediction time       : ", 1000 * (seg_time-resize_time))
+            self.generate_single_segmask(msg.header, result_panoptic_seg, segments_info)
+
+            total_time = timeit.default_timer()
+            print(f"Processing time of {self._target_cam} : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\n")
+                
+        except CvBridgeError as e:
+            print(e)
+
+
 def setup_cfg(args):
+
+
     # load config from file and command-line arguments
     cfg = get_cfg()
     add_yoso_config(cfg)
@@ -316,46 +398,68 @@ def get_parser():
     
     return parser
 
+def ctrl_c_handler(sig, frame):
+    print('Good bye!')
+    sys.exit(0)
 
 def main(args=sys.argv[1:]):
-    rclpy.init()
-    node=YosoNode()
-    executor = MultiThreadedExecutor()
-    executor.add_node(node)
+    
+    # node=YosoNode()
+    # node = YosoNode_dev("master")
     print("Staring YOSO ROS2 Node...")
-    # rclpy.spin(node)
     
-    # mp.set_start_method("spawn", force=True)
-    args = get_parser().parse_args()
-    setup_logger(name="fvcore")
-    logger = setup_logger()
-    logger.info("Arguments: " + str(args))
-
-    cfg = setup_cfg(args)
-    node.getcfg(cfg)
     
-    # clear the console terminal
-    os.system('clear')
-    print("===================== YOSO ROS2 Node =====================")
-    # demo = VisualizationDemo(cfg, parallel=False)
-    if VISUALIZE:
-        cv2.namedWindow('cam 0', cv2.WINDOW_NORMAL)
-        cv2.namedWindow('Panoptic Mask 0', cv2.WINDOW_NORMAL)
-        cv2.namedWindow('Panoptic Mask 1', cv2.WINDOW_NORMAL)
-        cv2.namedWindow('Panoptic Mask 2', cv2.WINDOW_NORMAL)
-        cv2.createTrackbar('Scale', 'cam 0', image_scale, 10, node.change_scale)
-    if args.azure:
-        try:
-            # rclpy.spin(node)
-            executor.spin()
-        finally:
-            executor.shutdown()
-            node.destroy_node()
-            rclpy.shutdown()
+    # create 3 process for 3 cameras by using mp
+    # node0 = YosoNode_dev("master")
+    # node1 = YosoNode_dev("sub1")
+    # node2 = YosoNode_dev("sub2")
+    # node0.run(args)
+    p0 = mp.Process(target=YosoNode_dev,args=(args,"master",))
+    p1 = mp.Process(target=YosoNode_dev,args=(args,"sub1",))
+    p2 = mp.Process(target=YosoNode_dev,args=(args,"sub2",))
+
+    # start 3 process
+    p0.start()
+    p1.start()
+    p2.start()
+
+    # # wait for 3 process
+    p0.join()
+    p1.join()
+    p2.join()
+
+
+    # args = get_parser().parse_args()
+    # setup_logger(name="fvcore")
+    # logger = setup_logger()
+    # logger.info("Arguments: " + str(args))
+
+    # cfg = setup_cfg(args)
+    # node.getcfg(cfg)
+    
+    # # clear the console terminal
+    # os.system('clear')
+    # print("===================== YOSO ROS2 Node =====================")
+    # # demo = VisualizationDemo(cfg, parallel=False)
+    # if VISUALIZE:
+    #     cv2.namedWindow('cam 0', cv2.WINDOW_NORMAL)
+    #     cv2.namedWindow('Panoptic Mask 0', cv2.WINDOW_NORMAL)
+    #     cv2.namedWindow('Panoptic Mask 1', cv2.WINDOW_NORMAL)
+    #     cv2.namedWindow('Panoptic Mask 2', cv2.WINDOW_NORMAL)
+    #     cv2.createTrackbar('Scale', 'cam 0', image_scale, 10, node.change_scale)
+    # if args.azure:
+    #     try:
+    #         rclpy.spin(node)
+    #     finally:
+    #         node.destroy_node()
+    #         rclpy.shutdown()
 
 
 
-
+    # nodecb0.destroy_node()
+    # node1.destroy_node()
+    # node2.destroy_node()
+    # rclpy.shutdown()
 
 
 if __name__ == "__main__":
