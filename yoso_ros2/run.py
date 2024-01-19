@@ -10,7 +10,6 @@ import warnings
 import cv2
 import tqdm
 import rclpy
-from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import MultiThreadedExecutor
 import sys
 import timeit
@@ -28,8 +27,14 @@ from projects.YOSO.yoso.segmentator import YOSO
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 import torch
 import numba as nb
+from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 torch.multiprocessing.set_start_method('spawn')
+
+# usgin torch cuda gpu 1
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+
 
 # constants
 image_scale = 5
@@ -40,9 +45,9 @@ Image_width = 128 * image_scale#1280
 
 DEBUG = False
 VISUALIZE = False
-FAKE_TOPIC=False
+FAKE_TOPIC = False
 class YosoNode(Node):
-
+    ## 싱크 안맞췄음.
     def __init__(self):
         callback_group0 = MutuallyExclusiveCallbackGroup()
         callback_group1 = MutuallyExclusiveCallbackGroup()
@@ -71,6 +76,7 @@ class YosoNode(Node):
         self.period=0.05
         if FAKE_TOPIC: self.timer = self.create_timer(self.period, self.timer_callback)
         self.hz = 1/self.period
+        
 
     def timer_callback(self):
         nanosecMax = 1000000000
@@ -140,7 +146,8 @@ class YosoNode(Node):
             #     cv2.imshow("cam 0", self.result_frame0)
             #     cv2.waitKey(1)
             total_time = timeit.default_timer()
-            print(f"callback0 processed : {1000 * (total_time-start_time)} ms")
+            print(f"Processing time of Cam 0 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
+                
         except CvBridgeError as e:
             print(e)
     def image_callback1(self, msg):
@@ -166,7 +173,9 @@ class YosoNode(Node):
             #     cv2.imshow("cam 1", self.result_frame1)
             #     cv2.waitKey(1)
             total_time = timeit.default_timer()
-            print(f"callback1 processed : {1000 * (total_time-start_time)} ms")
+            # print(f"Cam 1 : {1000 * (total_time-start_time)} ms",end="\r")
+            print(f"Processing time of Cam 1 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
+            
         except CvBridgeError as e:
             print(e)
     def image_callback2(self, msg):
@@ -192,7 +201,8 @@ class YosoNode(Node):
             #     cv2.imshow("cam 2", self.result_frame2)
             #     cv2.waitKey(1)
             total_time = timeit.default_timer()
-            print(f"callback2 processed : {1000 * (total_time-start_time)} ms")
+            print(f"Processing time of Cam 2 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
+            
         except CvBridgeError as e:
             print(e)
 
@@ -201,83 +211,9 @@ class YosoNode(Node):
         # convert tensor to numpy array
         temp = panoptic_seg.cpu().numpy()
         if DEBUG: checkpoint = timeit.default_timer()
-        """
-        ### generate panoptic mask
-        # t0=timeit.default_timer()
-        # panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
-        # for i in range(temp.shape[0]):
-        #     for j in range(temp.shape[1]):
-        #         if temp[i,j] == 0: panoptic_mask[i,j] = 0
-        #         else: panoptic_mask[i,j] = seg_info[temp[i,j]-1]['category_id']
-        # t1=timeit.default_timer()
-        # print("[mask gen] doubled for loop : ", 1000 * (t1-t0))
-
-        # #############################################
-        # chkpoint0 = timeit.default_timer()
-        # def get_category_id(idx):
-        #     return 1 + seg_info[idx-1]['category_id']
-        
-        # panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
-        # vfunc = np.vectorize(get_category_id)
-        # nonzero = np.nonzero(temp)
-        # panoptic_mask[nonzero] = vfunc(temp[nonzero])
-        # chkpoint1 = timeit.default_timer()
-        # print("[mask gen] vectorize nonzero: ", 1000 * (chkpoint1-chkpoint0))
-        # #############################################
-        # chkpoint2 = timeit.default_timer()
-        # panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
-        # lambda_func = lambda idx: 1 + seg_info[idx-1]['category_id'] if idx != 0 else 0
-        # vfunc = np.vectorize(lambda_func)
-        # nonzero = np.nonzero(temp)
-        # panoptic_mask[nonzero] = vfunc(temp[nonzero])
-        # chkpoint3 = timeit.default_timer() 
-        # print("[mask gen] vectorize lambda : ", 1000 * (chkpoint3-chkpoint2))
-        # #############################################
-        # chkpoint2 = timeit.default_timer()
-        # panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
-        # lambda_func = lambda idx: 1 + seg_info[idx-1]['category_id'] if idx != 0 else 0
-        # # gen panoptic mask using map
-        # panoptic_mask = np.array(list(map(lambda_func,temp.flatten()))).reshape(temp.shape)
-        # chkpoint3 = timeit.default_timer() 
-        # print("[mask gen] lambda map       : ", 1000 * (chkpoint3-chkpoint2))
-        # ##############################################
-        # chkpoint0 = timeit.default_timer()
-        # def get_category_id(idx):
-        #     if idx==0: return 0
-        #     else: return 1 + seg_info[idx-1]['category_id']
-        
-        # panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
-        # vfunc = np.vectorize(get_category_id)
-        # # gen panoptic mask using vfunc
-        # panoptic_mask = vfunc(temp)
-        # chkpoint1 = timeit.default_timer()
-        # print("[mask gen] vectorize         : ", 1000 * (chkpoint1-chkpoint0))
-        ##############################################"""
-        
         panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
         for i in range(len(seg_info)): panoptic_mask[temp==i+1] = seg_info[i]['category_id']+1
-            # len seg_info=10; i = 0~9 >>i+1=1~10  
-            # seg_info[0] == id:1 /
-            # below code is numpy array support 
-            # temp = 7 7 7      temp==7 >>> 1 1 1       
-            #        7 5 7                  1 0 1
-            #        5 5 5                  0 0 0
-            # panoptic_mask[temp==7] = 10
-            # >>> panoptic_mask = 10 10 10
-            #                     10 0  10
-            #                     0  0  0 
         
-        ############################################3#
-        # chk0=timeit.default_timer()
-        # panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
-        # for i in range(len(seg_info)):# len seg_info=10; i = 0~9 >>i+1=1~10  
-            # panoptic_mask = np.where(temp==i+1,seg_info[i]['category_id']+1,panoptic_mask)
-        #     # panoptic_mask[temp==i+1] = seg_info[i]['category_id']+1
-        # chk1=timeit.default_timer()
-        # print("[mask gen] dict loop np.where: ", 1000 * (chk1-chk0))
-                
-        
-        # show mask image
         if VISUALIZE:
             # print(panoptic_mask)
             # print(panoptic_mask.shape)
@@ -386,7 +322,7 @@ def main(args=sys.argv[1:]):
     node=YosoNode()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
-    print("ROS2 Node started!")
+    print("Staring YOSO ROS2 Node...")
     # rclpy.spin(node)
     
     # mp.set_start_method("spawn", force=True)
@@ -398,8 +334,9 @@ def main(args=sys.argv[1:]):
     cfg = setup_cfg(args)
     node.getcfg(cfg)
     
-    
-
+    # clear the console terminal
+    os.system('clear')
+    print("===================== YOSO ROS2 Node =====================")
     # demo = VisualizationDemo(cfg, parallel=False)
     if VISUALIZE:
         cv2.namedWindow('cam 0', cv2.WINDOW_NORMAL)
@@ -407,7 +344,6 @@ def main(args=sys.argv[1:]):
         cv2.namedWindow('Panoptic Mask 1', cv2.WINDOW_NORMAL)
         cv2.namedWindow('Panoptic Mask 2', cv2.WINDOW_NORMAL)
         cv2.createTrackbar('Scale', 'cam 0', image_scale, 10, node.change_scale)
-    
     if args.azure:
         try:
             # rclpy.spin(node)
