@@ -1,14 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
-import glob
-import multiprocessing as mp
 import numpy as np
 import os
-import tempfile
-import time
-import warnings
 import cv2
-import tqdm
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 import sys
@@ -24,10 +18,11 @@ from detectron2.utils.logger import setup_logger
 from demo.predictor import VisualizationDemo
 from demo.config import add_yoso_config
 from projects.YOSO.yoso.segmentator import YOSO
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 import torch
-import numba as nb
-from message_filters import ApproximateTimeSynchronizer, Subscriber
+
+from functools import lru_cache
+from numba import jit
 
 torch.multiprocessing.set_start_method('spawn')
 
@@ -46,9 +41,13 @@ Image_width = 128 * image_scale#1280
 DEBUG = False
 VISUALIZE = False
 FAKE_TOPIC = False
+
+@lru_cache(maxsize=10)
+def gen_zero_mask(shape):
+    return np.zeros(shape, dtype=np.uint8)
+
 class YosoNode(Node):
-    ## 싱크 안맞췄음.
-    def __init__(self):
+    def __init__(self) -> None:
         callback_group0 = MutuallyExclusiveCallbackGroup()
         callback_group1 = MutuallyExclusiveCallbackGroup()
         callback_group2 = MutuallyExclusiveCallbackGroup()
@@ -62,9 +61,9 @@ class YosoNode(Node):
         self.seg_pub0 = self.create_publisher(Image, "/yoso_node/master", 1)
         self.seg_pub1 = self.create_publisher(Image, "/yoso_node/sub1", 1)
         self.seg_pub2 = self.create_publisher(Image, "/yoso_node/sub2", 1)
-        self.input_image0 = None
-        self.input_image1 = None
-        self.input_image2 = None
+        # self.input_image0 = None
+        # self.input_image1 = None
+        # self.input_image2 = None
         self.result_frame0 = None
         self.result_frame1 = None
         self.result_frame2 = None
@@ -76,9 +75,14 @@ class YosoNode(Node):
         self.period=0.05
         if FAKE_TOPIC: self.timer = self.create_timer(self.period, self.timer_callback)
         self.hz = 1/self.period
+
+        self.visFPS = False
+        self.time0 = 0
+        self.time1 = 0
+        self.time2 = 0
         
 
-    def timer_callback(self):
+    def timer_callback(self) -> None:
         nanosecMax = 1000000000
         if self.seg_msg0 is not None:
             if self.seg_msg0.header.stamp.nanosec + int(nanosecMax/self.hz) >= nanosecMax:
@@ -105,13 +109,12 @@ class YosoNode(Node):
         # print("|| time stamp add  : ", self.seg_msg0.header.stamp.nanosec + int(nanosecMax/100))
         
 
-
-    def getcfg(self,cfg):
+    def getcfg(self,cfg) -> None:
         self.demo = VisualizationDemo(cfg, parallel=False)
         self.demo1 = VisualizationDemo(cfg, parallel=False)
         self.demo2 = VisualizationDemo(cfg, parallel=False)
 
-    def change_scale(self,pos):
+    def change_scale(self,pos) -> None:
         if pos==0: return
         global image_scale, Image_height, Image_width
         image_scale = pos
@@ -120,20 +123,19 @@ class YosoNode(Node):
         Image_height = 72 * image_scale
         Image_width = 128 * image_scale
 
-    def image_callback0(self, msg):
+    def image_callback0(self, msg) -> None:
         try :
             start_time = timeit.default_timer()
-            self.input_image0 = cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (int(Image_width),int(Image_height)))# 1280 720
+            input_image0 = cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (int(Image_width),int(Image_height)))# 1280 720
             if DEBUG:
                 resize_time = timeit.default_timer()
                 print("+++++image callback0"); #print("running time : ", 1000 * (end_time-start_time)); print("FPS : ", 1/(end_time-start_time))
                 print("resize time           : ",1000*(resize_time-start_time))
-            # self.result_frame0, self.result_panoptic_seg0, self.segments_info0 = self.demo.run_on_azure(self.input_image0)
-            self.result_panoptic_seg0, self.segments_info0 = self.demo.run_on_azure(self.input_image0)
+            result_panoptic_seg0, segments_info0 = self.demo.run_on_azure(input_image0)
             if DEBUG:
                 seg_time = timeit.default_timer()
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
-            self.gen_seg_mask(0, msg.header, self.result_panoptic_seg0, self.segments_info0)
+            self.gen_seg_mask(0, msg.header, result_panoptic_seg0, segments_info0)
             # self.debug_panoptic()
 
             # end_time = timeit.default_timer()
@@ -146,24 +148,24 @@ class YosoNode(Node):
             #     cv2.imshow("cam 0", self.result_frame0)
             #     cv2.waitKey(1)
             total_time = timeit.default_timer()
-            print(f"Processing time of Cam 0 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
-                
+            # print(f"Processing time of Cam 0 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
+            self.time0 = int(1000 * (total_time-start_time))
         except CvBridgeError as e:
             print(e)
-    def image_callback1(self, msg):
+        
+    def image_callback1(self, msg) -> None:
         try :
             start_time = timeit.default_timer()
-            self.input_image1 = cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (int(Image_width),int(Image_height)))# 1280 720
+            input_image1 = cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (int(Image_width),int(Image_height)))# 1280 720
             if DEBUG:
                 resize_time = timeit.default_timer()
                 print("+++++image callback1"); #print("running time : ", 1000 * (end_time-start_time)); print("FPS : ", 1/(end_time-start_time))
                 print("resize time           : ",1000*(resize_time-start_time))
-            # self.result_frame1, self.result_panoptic_seg1, self.segments_info1 = self.demo1.run_on_azure(self.input_image1)
-            self.result_panoptic_seg1, self.segments_info1 = self.demo1.run_on_azure(self.input_image1)
+            result_panoptic_seg1, segments_info1 = self.demo1.run_on_azure(input_image1)
             if DEBUG: 
                 seg_time = timeit.default_timer()
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
-            self.gen_seg_mask(1, msg.header, self.result_panoptic_seg1, self.segments_info1)
+            self.gen_seg_mask(1, msg.header, result_panoptic_seg1, segments_info1)
 
             # end_time = timeit.default_timer()
             # FPS = 1./(end_time - start_time)
@@ -174,24 +176,24 @@ class YosoNode(Node):
             #     cv2.waitKey(1)
             total_time = timeit.default_timer()
             # print(f"Cam 1 : {1000 * (total_time-start_time)} ms",end="\r")
-            print(f"Processing time of Cam 1 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
-            
+            # print(f"Processing time of Cam 1 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
+            self.time1 = int(1000 * (total_time-start_time))
         except CvBridgeError as e:
             print(e)
-    def image_callback2(self, msg):
+            
+    def image_callback2(self, msg) -> None:
         try :
             start_time = timeit.default_timer()
-            self.input_image2 = cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (int(Image_width),int(Image_height)))# 1280 720
+            input_image2 = cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (int(Image_width),int(Image_height)))# 1280 720
             if DEBUG: 
                 resize_time = timeit.default_timer()
                 print("+++++image callback2"); #rint("running time : ", 1000 * (end_time-start_time)); print("FPS : ", 1/(end_time-start_time))
                 print("resize time           : ",1000*(resize_time-start_time))
-            # self.result_frame2, self.result_panoptic_seg2, self.segments_info2 = self.demo2.run_on_azure(self.input_image2)
-            self.result_panoptic_seg2, self.segments_info2 = self.demo2.run_on_azure(self.input_image2)
+            result_panoptic_seg2, segments_info2 = self.demo2.run_on_azure(input_image2)
             if DEBUG: 
                 seg_time = timeit.default_timer()
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
-            self.gen_seg_mask(2, msg.header, self.result_panoptic_seg2, self.segments_info2)
+            self.gen_seg_mask(2, msg.header, result_panoptic_seg2, segments_info2)
 
             # end_time = timeit.default_timer()
             # FPS = 1./(end_time - start_time)
@@ -201,26 +203,35 @@ class YosoNode(Node):
             #     cv2.imshow("cam 2", self.result_frame2)
             #     cv2.waitKey(1)
             total_time = timeit.default_timer()
-            print(f"Processing time of Cam 2 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
-            
+            # print(f"Processing time of Cam 2 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
+            self.time2 = int(1000 * (total_time-start_time))
         except CvBridgeError as e:
             print(e)
+    
 
-    def gen_seg_mask(self,camnum,header,panoptic_seg,seg_info):
+    def gen_seg_mask(self, camnum:int, header, panoptic_seg, seg_info:dict) -> None:
+        if self.time0 and self.time1 and self.time2: 
+            print(f"|     {self.time0}    |     {self.time1}    |     {self.time2}    |    {(1000/self.time0):.1f}   |    {(1000/self.time1):.1f}   |    {(1000/self.time2):.1f}   |",end="\r")
+        elif not self.visFPS:
+            # clear the console terminal
+            self.visFPS = True
+            os.system('clear')
+            print(" ")
+            print("                             YOSO ROS 2 Node                             ")
+            print(" ")
+            print("+-----------------------------------+-----------------------------------+")
+            print("|        Processing Time(ms)        |                FPS                |")
+            print("+-----------+-----------+-----------+-----------+-----------+-----------+")
+            print("|   Cam 0   |   Cam 1   |   Cam 2   |   Cam 0   |   Cam 1   |   Cam 2   |")
+            print("+-----------------------------------------------------------------------+")
+
         if DEBUG: start_time = timeit.default_timer()
         # convert tensor to numpy array
         temp = panoptic_seg.cpu().numpy()
         if DEBUG: checkpoint = timeit.default_timer()
-        panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
+        panoptic_mask = gen_zero_mask(temp.shape)
         for i in range(len(seg_info)): panoptic_mask[temp==i+1] = seg_info[i]['category_id']+1
         
-        if VISUALIZE:
-            # print(panoptic_mask)
-            # print(panoptic_mask.shape)
-            windowname="Panoptic Mask "+str(camnum)
-            cv2.imshow(windowname, panoptic_mask)
-            # cv2.waitKey(1)
-
         if DEBUG: checkpoint2 = timeit.default_timer()
         Seg_msg = self.bridge.cv2_to_imgmsg(panoptic_mask, "mono8")
         Seg_msg.header = header
@@ -243,7 +254,7 @@ class YosoNode(Node):
             print("mask to msg copy time : ", 1000 * (checkpoint3-checkpoint2))
             print("msg pub time          : ", 1000 * (end_time-checkpoint3))
 
-    def debug_panoptic(self):
+    def debug_panoptic(self) -> None:
         temp = self.result_panoptic_seg0.tolist() # convert tensor to list
         print("!!START===============================")
         # print(temp[0][0]) # pixel's seg id
@@ -334,9 +345,7 @@ def main(args=sys.argv[1:]):
     cfg = setup_cfg(args)
     node.getcfg(cfg)
     
-    # clear the console terminal
-    os.system('clear')
-    print("===================== YOSO ROS2 Node =====================")
+    
     # demo = VisualizationDemo(cfg, parallel=False)
     if VISUALIZE:
         cv2.namedWindow('cam 0', cv2.WINDOW_NORMAL)
@@ -346,6 +355,7 @@ def main(args=sys.argv[1:]):
         cv2.createTrackbar('Scale', 'cam 0', image_scale, 10, node.change_scale)
     if args.azure:
         try:
+
             # rclpy.spin(node)
             executor.spin()
         finally:
