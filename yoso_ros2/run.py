@@ -22,7 +22,6 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 import torch
 
 from functools import lru_cache
-from numba import jit
 
 torch.multiprocessing.set_start_method('spawn')
 
@@ -55,9 +54,9 @@ class YosoNode(Node):
         self.image_topic0 = "/azure_kinect/master/rgb/image_raw"
         self.image_topic1 = "/azure_kinect/sub1/rgb/image_raw"
         self.image_topic2 = "/azure_kinect/sub2/rgb/image_raw"
-        self.image_sub0 = self.create_subscription(Image, self.image_topic0, self.image_callback0, 2, callback_group=callback_group0)
-        self.image_sub1 = self.create_subscription(Image, self.image_topic1, self.image_callback1, 2, callback_group=callback_group1)
-        self.image_sub2 = self.create_subscription(Image, self.image_topic2, self.image_callback2, 2, callback_group=callback_group2)
+        self.image_sub0 = self.create_subscription(Image, self.image_topic0, self.image_callback0, 1, callback_group=callback_group0)
+        self.image_sub1 = self.create_subscription(Image, self.image_topic1, self.image_callback1, 1, callback_group=callback_group1)
+        self.image_sub2 = self.create_subscription(Image, self.image_topic2, self.image_callback2, 1, callback_group=callback_group2)
         self.seg_pub0 = self.create_publisher(Image, "/yoso_node/master", 1)
         self.seg_pub1 = self.create_publisher(Image, "/yoso_node/sub1", 1)
         self.seg_pub2 = self.create_publisher(Image, "/yoso_node/sub2", 1)
