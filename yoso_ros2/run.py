@@ -134,17 +134,7 @@ class YosoNode(Node):
                 seg_time = timeit.default_timer()
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
             self.gen_seg_mask(0, msg.header, result_panoptic_seg0, segments_info0)
-            # self.debug_panoptic()
-
-            # end_time = timeit.default_timer()
-            # print("+++ callback time : ", 1000 * (end_time-start_time))
-            # FPS = 1./(end_time - start_time)
-            # if VISUALIZE:
-            #     cv2.getTrackbarPos('Scale','cam 0')
-            #     cv2.putText(self.result_frame0, str(Image_width) + "x" + str(Image_height), (5, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            #     cv2.putText(self.result_frame0, "FPS : {:.1f}".format(FPS), (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            #     cv2.imshow("cam 0", self.result_frame0)
-            #     cv2.waitKey(1)
+            
             total_time = timeit.default_timer()
             # print(f"Processing time of Cam 0 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
             self.time0 = int(1000 * (total_time-start_time))
@@ -165,13 +155,6 @@ class YosoNode(Node):
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
             self.gen_seg_mask(1, msg.header, result_panoptic_seg1, segments_info1)
 
-            # end_time = timeit.default_timer()
-            # FPS = 1./(end_time - start_time)
-            
-            # if VISUALIZE:
-            #     cv2.putText(self.result_frame1, "FPS : {:.1f}".format(FPS), (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            #     cv2.imshow("cam 1", self.result_frame1)
-            #     cv2.waitKey(1)
             total_time = timeit.default_timer()
             # print(f"Cam 1 : {1000 * (total_time-start_time)} ms",end="\r")
             # print(f"Processing time of Cam 1 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
@@ -187,19 +170,14 @@ class YosoNode(Node):
                 resize_time = timeit.default_timer()
                 print("+++++image callback2"); #rint("running time : ", 1000 * (end_time-start_time)); print("FPS : ", 1/(end_time-start_time))
                 print("resize time           : ",1000*(resize_time-start_time))
+            
             result_panoptic_seg2, segments_info2 = self.demo2.run_on_azure(input_image2)
             if DEBUG: 
                 seg_time = timeit.default_timer()
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
+            
             self.gen_seg_mask(2, msg.header, result_panoptic_seg2, segments_info2)
 
-            # end_time = timeit.default_timer()
-            # FPS = 1./(end_time - start_time)
-            
-            # if VISUALIZE:
-            #     cv2.putText(self.result_frame2, "FPS : {:.1f}".format(FPS), (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            #     cv2.imshow("cam 2", self.result_frame2)
-            #     cv2.waitKey(1)
             total_time = timeit.default_timer()
             # print(f"Processing time of Cam 2 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
             self.time2 = int(1000 * (total_time-start_time))
