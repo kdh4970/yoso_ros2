@@ -29,7 +29,6 @@ torch.multiprocessing.set_start_method('spawn')
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
-
 # constants
 image_scale = 5
 # Image_height = 1536 * (image_scale/10)  #1536
@@ -330,7 +329,7 @@ def get_parser():
 def main(args=sys.argv[1:]):
     rclpy.init()
     node=YosoNode()
-    executor = MultiThreadedExecutor()
+    executor = MultiThreadedExecutor(num_threads=3)
     executor.add_node(node)
     print("Staring YOSO ROS2 Node...")
     # rclpy.spin(node)
