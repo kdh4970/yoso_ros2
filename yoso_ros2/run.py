@@ -28,6 +28,11 @@ torch.multiprocessing.set_start_method('spawn')
 # usgin torch cuda gpu 1
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+# priority of process scheduling
+# os.nice(-10)
+os.system("sudo renice -n -15 -p "+str(os.getpid()))
+
+
 
 # constants
 image_scale = 5
@@ -129,11 +134,11 @@ class YosoNode(Node):
                 resize_time = timeit.default_timer()
                 print("+++++image callback0"); #print("running time : ", 1000 * (end_time-start_time)); print("FPS : ", 1/(end_time-start_time))
                 print("resize time           : ",1000*(resize_time-start_time))
-            result_panoptic_seg0, segments_info0 = self.demo.run_on_azure(input_image0)
+            # result_panoptic_seg0, segments_info0 = self.demo.run_on_azure(input_image0)
             if DEBUG:
                 seg_time = timeit.default_timer()
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
-            self.gen_seg_mask(0, msg.header, result_panoptic_seg0, segments_info0)
+            # self.gen_seg_mask(0, msg.header, result_panoptic_seg0, segments_info0)
             
             total_time = timeit.default_timer()
             # print(f"Processing time of Cam 0 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
@@ -149,11 +154,11 @@ class YosoNode(Node):
                 resize_time = timeit.default_timer()
                 print("+++++image callback1"); #print("running time : ", 1000 * (end_time-start_time)); print("FPS : ", 1/(end_time-start_time))
                 print("resize time           : ",1000*(resize_time-start_time))
-            result_panoptic_seg1, segments_info1 = self.demo1.run_on_azure(input_image1)
+            # result_panoptic_seg1, segments_info1 = self.demo1.run_on_azure(input_image1)
             if DEBUG: 
                 seg_time = timeit.default_timer()
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
-            self.gen_seg_mask(1, msg.header, result_panoptic_seg1, segments_info1)
+            # self.gen_seg_mask(1, msg.header, result_panoptic_seg1, segments_info1)
 
             total_time = timeit.default_timer()
             # print(f"Cam 1 : {1000 * (total_time-start_time)} ms",end="\r")
@@ -171,12 +176,12 @@ class YosoNode(Node):
                 print("+++++image callback2"); #rint("running time : ", 1000 * (end_time-start_time)); print("FPS : ", 1/(end_time-start_time))
                 print("resize time           : ",1000*(resize_time-start_time))
             
-            result_panoptic_seg2, segments_info2 = self.demo2.run_on_azure(input_image2)
+            # result_panoptic_seg2, segments_info2 = self.demo2.run_on_azure(input_image2)
             if DEBUG: 
                 seg_time = timeit.default_timer()
                 print("prediction time       : ", 1000 * (seg_time-resize_time))
             
-            self.gen_seg_mask(2, msg.header, result_panoptic_seg2, segments_info2)
+            # self.gen_seg_mask(2, msg.header, result_panoptic_seg2, segments_info2)
 
             total_time = timeit.default_timer()
             # print(f"Processing time of Cam 2 : {1000 * (total_time-start_time):.0f} ms          FPS : {1/(total_time-start_time):.1f}",end="\r")
