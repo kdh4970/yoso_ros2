@@ -24,10 +24,12 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 import torch
 
+from functools import lru_cache
+
 torch.multiprocessing.set_start_method('spawn',force=True)
 
 # usgin torch cuda gpu 1
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 logger = setup_logger(name="YOSO_ROS2")
 log = logger.info
@@ -35,8 +37,8 @@ log = logger.info
 image_scale = 5
 # Image_height = 1536 * (image_scale/10)  #1536
 # Image_width = 2048 * (image_scale/10)#2048
-Image_height = 72 * image_scale  #720
-Image_width = 128 * image_scale#1280
+Image_height = int(72 * image_scale)  #720
+Image_width = int(128 * image_scale)#1280
 
 
 
@@ -107,16 +109,26 @@ def get_parser():
     
     return parser
 
+@lru_cache(maxsize=1)
+def generateZeromask(shape):
+    return np.full(shape, 0, dtype=np.uint8)
+
 class SubProcessManager():
-    def __init__(self,cfg):
+    def __init__(self,cfg) -> None:
         self.demo = VisualizationDemo(cfg, parallel=False)
 
-    def generate_and_publish_segmask(self, image, index) -> None:
+    def generate_and_publish_segmask(self, image, index):
         log(f"Job {index} >>> Start")
         panoptic_seg, seg_info = self.demo.run_on_azure(image)
         temp = panoptic_seg.cpu().numpy()
-        panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
-        for i in range(len(seg_info)): panoptic_mask[temp==i+1] = seg_info[i]['category_id']+1
+        
+        # panoptic_mask = np.zeros(temp.shape, dtype=np.uint8)
+        panoptic_mask = generateZeromask(temp.shape)
+        
+        for i in range(len(seg_info)): 
+            category_val = seg_info[i]["category_id"]+1
+            panoptic_mask[temp==i+1] = category_val
+
 
         log(f"Job {index} <<< Done")
         return panoptic_mask
@@ -132,7 +144,7 @@ class SubProcessManager():
 
 
 class YosoNode(Node):
-    def __init__(self,cfg):
+    def __init__(self,cfg) -> None:
         super().__init__("yoso_node")
 
         log("Establishing ROS2 Node Connection...")
@@ -156,12 +168,13 @@ class YosoNode(Node):
         self.mask = [None, None, None]
         self.cfg = [cfg] * 3
         self.count = 0
+        self.indices = [0,1,2]
 
         log("Creating Process Pool...",)
         self.process_pool = mp.Pool(processes=3)
 
         
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.process_pool.close()
         self.process_pool.join()
         log("Process Pool Closed")
@@ -173,16 +186,16 @@ class YosoNode(Node):
         input_image = []
         header = []
         for msg in msgs:
-            input_image.append(cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (int(Image_width),int(Image_height))))# 1280 720
+            input_image.append(cv2.resize(self.bridge.imgmsg_to_cv2(msg, "bgr8"), (Image_width,Image_height)))# 1280 720
             header.append(msg.header)
         
         # allocate process for call goto_model
-        indices = [0,1,2]
+        
         # breakpoint()
-        self.mask = self.process_pool.map(SubProcessManager.worker, zip(self.cfg, input_image, indices),chunksize=1)
+        self.mask = self.process_pool.map(SubProcessManager.worker, zip(self.cfg, input_image, self.indices),chunksize=1)
         
         # publish
-        for i in indices:
+        for i in self.indices:
             self.publish_segmask(self.mask[i], header[i], i)
         end = timeit.default_timer()
         log(f"Total Processing Time : {1000 * (end-start):.0f} ms          FPS : {1/(end-start):.1f}")
