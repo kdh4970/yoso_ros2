@@ -1,6 +1,10 @@
 ## info  
 ROS2 wrapper of panoptic segmentation model YOSO(You Only Segment Once)  
-need to download validation set from below original source and place it to model zoo directory.  
+need to download pth file.  
+
+For the parallel prediction for each camera, multi-processing is used.
+
+
 
 
 

@@ -10,7 +10,7 @@ import rclpy
 import sys
 import timeit
 from rclpy.node import Node
-from cv_bridge import CvBridge,CvBridgeError
+from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
 
 from detectron2.config import get_cfg
@@ -20,7 +20,6 @@ from detectron2.utils.logger import setup_logger
 from demo.predictor import VisualizationDemo
 from demo.config import add_yoso_config
 from projects.YOSO.yoso.segmentator import YOSO
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 import torch
 
